@@ -8,6 +8,8 @@
     <!-- 引入 jsPDF 用於匯出 PDF -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+    <!-- 引入 Chart.js 用於圖表視覺化 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         .slider-custom {
@@ -168,18 +170,43 @@
                     <div class="mt-6 pt-4 border-t border-slate-700 flex gap-4">
                         <button id="btn-export-csv" class="flex-1 bg-slate-700 hover:bg-slate-600 text-slate-200 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                            匯出 CSV (Power vs Angle)
+                            匯出 CSV
                         </button>
                         <button id="btn-export-pdf" class="flex-1 bg-red-900/40 hover:bg-red-800/60 text-red-200 border border-red-800/50 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
-                            匯出 PDF (Power vs Angle)
+                            匯出 PDF
                         </button>
                     </div>
 
                     <div class="mt-4 pt-4 border-t border-slate-700 text-xs text-slate-500">
-                        * 註：計算結果為基於半經驗公式之理論近似值，實際產品會因燒結孔隙率、充填率與折彎打扁加工 (Flattening/Bending) 而有所差異。<br>
-                        * 建議在實機模組設計前，需與熱管供應商進行 Sample 實測校驗。
+                        * 註：計算結果為理論近似值，實際產品會因燒結孔隙率、打扁加工而有所差異。
                     </div>
+                </div>
+            </div>
+
+            <!-- 下方：視覺化圖表區塊 (新增) -->
+            <div class="md:col-span-12 mt-2">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    
+                    <!-- 圖表 1: Power vs. Angle -->
+                    <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg relative h-80">
+                        <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-2">POWER VS. ANGLE</h3>
+                        <div class="absolute inset-0 top-12 p-4">
+                            <canvas id="chart-power"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- 圖表 2: Axial Temperature Profile -->
+                    <div class="bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-lg relative h-80">
+                        <div class="flex justify-between items-center mb-2">
+                            <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">AXIAL TEMPERATURE PROFILE</h3>
+                            <span class="bg-slate-700 text-slate-300 text-xs px-2 py-1 rounded-full border border-slate-600 font-mono">ø <span id="chart2-dia">6</span> mm</span>
+                        </div>
+                        <div class="absolute inset-0 top-12 p-4">
+                            <canvas id="chart-temp"></canvas>
+                        </div>
+                    </div>
+
                 </div>
             </div>
 
@@ -187,6 +214,49 @@
     </div>
 
     <script>
+        // --- Chart.js 全局設定與自訂外掛 ---
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.font.family = "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif";
+        
+        // 自訂背景區塊外掛 (渲染 Evap, Axial, Cond 區塊顏色)
+        const zonePlugin = {
+            id: 'zonePlugin',
+            beforeDraw: (chart) => {
+                if (chart.config.options.plugins.zonePlugin && chart.config.options.plugins.zonePlugin.enabled) {
+                    const ctx = chart.canvas.getContext('2d');
+                    const xAxis = chart.scales.x;
+                    const { left, right, top, bottom } = chart.chartArea;
+                    const Le = chart.config.options.plugins.zonePlugin.Le;
+                    const Lc = chart.config.options.plugins.zonePlugin.Lc;
+                    const L = chart.config.options.plugins.zonePlugin.L;
+
+                    const x_evap = xAxis.getPixelForValue(Le);
+                    const x_cond = xAxis.getPixelForValue(L - Lc);
+
+                    ctx.save();
+                    
+                    // 繪製 Evap 區塊背景 (紅色系)
+                    ctx.fillStyle = 'rgba(239, 68, 68, 0.05)';
+                    ctx.fillRect(left, top, x_evap - left, bottom - top);
+                    
+                    // 繪製 Cond 區塊背景 (藍色系)
+                    ctx.fillStyle = 'rgba(56, 189, 248, 0.05)';
+                    ctx.fillRect(x_cond, top, right - x_cond, bottom - top);
+                    
+                    // 繪製文字標籤
+                    ctx.fillStyle = '#64748b';
+                    ctx.font = '10px sans-serif';
+                    ctx.textAlign = 'center';
+                    if (x_evap > left + 20) ctx.fillText('Evap', left + (x_evap - left)/2, top + 15);
+                    if (x_cond > x_evap + 20) ctx.fillText('Axial', x_evap + (x_cond - x_evap)/2, top + 15);
+                    if (right > x_cond + 20) ctx.fillText('Cond', x_cond + (right - x_cond)/2, top + 15);
+                    
+                    ctx.restore();
+                }
+            }
+        };
+        Chart.register(zonePlugin);
+
         // --- 狀態變數 ---
         let state = {
             fluid: 'water',
@@ -198,6 +268,9 @@
             angle: 0,
             wick: 'standard'
         };
+
+        let powerChartInstance = null;
+        let tempChartInstance = null;
 
         // --- DOM 元素綁定 ---
         const ui = {
@@ -220,7 +293,8 @@
             outKeff: document.getElementById('out-keff'),
             gravityWarning: document.getElementById('gravity-warning'),
             btnExportCsv: document.getElementById('btn-export-csv'),
-            btnExportPdf: document.getElementById('btn-export-pdf')
+            btnExportPdf: document.getElementById('btn-export-pdf'),
+            chart2Dia: document.getElementById('chart2-dia')
         };
 
         // --- 事件監聽 ---
@@ -230,16 +304,15 @@
             calculate();
         });
 
-        // 自訂管徑輸入監聽
         ui.diaCustom.addEventListener('input', (e) => {
             let val = parseFloat(e.target.value);
             if(val > 0) {
                 state.d = val;
-                // 取消所有快速按鈕的選中狀態
                 ui.diaBtns.forEach(b => {
                     b.classList.remove('bg-blue-600');
                     b.classList.add('bg-slate-700');
                 });
+                ui.chart2Dia.innerText = state.d;
                 calculate();
             }
         });
@@ -253,7 +326,8 @@
                 e.target.classList.remove('bg-slate-700');
                 e.target.classList.add('bg-blue-600');
                 state.d = parseFloat(e.target.getAttribute('data-val'));
-                ui.diaCustom.value = state.d; // 同步更新輸入框
+                ui.diaCustom.value = state.d;
+                ui.chart2Dia.innerText = state.d;
                 calculate();
             });
         });
@@ -278,7 +352,7 @@
             state.angle = parseInt(e.target.value);
             let angleText = state.angle === 0 ? "水平" : (state.angle > 0 ? "順重力" : "逆重力");
             ui.angleVal.innerText = `${state.angle} ° (${angleText})`;
-            calculate();
+            calculate(); // 此處觸發重新計算與圖表更新
         });
 
         ui.wickType.addEventListener('change', (e) => {
@@ -287,8 +361,6 @@
         });
 
         // --- 核心物理邏輯抽離 ---
-        // 取得該管徑之毛細熱傳係數 (Capillary Factor, C_D)，單位 W*m
-        // 此係數反映截面積與毛細力，需除以有效長度 Leff 才會得到真實 Qmax
         function getBaseCapillaryFactor(d) {
             const pts = [[3, 2.0], [4, 4.0], [5, 6.4], [6, 8.8], [8, 14.0], [10, 20.0]];
             if (d <= pts[0][0]) return pts[0][1] * Math.pow(d / pts[0][0], 2);
@@ -303,63 +375,50 @@
             return 0;
         }
 
-        // 液體優值 (Liquid Merit Number) 經驗擬合函數 (以 60度C 的水 = 1.0 為基準)
         function getFluidMerit(fluid, T) {
             let M = 0;
             switch(fluid) {
                 case 'water':
-                    // 水在低溫(<20度)效能急遽下降，高溫(100度)達峰值
                     M = T < 20 ? 0.05 + (T - 5) * 0.03 : 1.15 - 0.00015 * Math.pow(T - 95, 2);
                     break;
                 case 'methanol':
-                    // 甲醇峰值約 50度C，整體約為水的 35%
                     M = 0.35 - 0.00005 * Math.pow(T - 50, 2);
                     break;
                 case 'acetone':
-                    // 丙酮峰值約 40度C
                     M = 0.30 - 0.00005 * Math.pow(T - 40, 2);
                     break;
                 case 'ammonia':
-                    // 氨峰值約 20度C
                     M = 0.50 - 0.00015 * Math.pow(T - 20, 2);
                     break;
             }
-            return Math.max(0.01, M); // 避免負值
+            return Math.max(0.01, M);
         }
 
-        // 獨立計算函數，方便產出報表時呼叫
         function computePerformance(fluid, d, L, Le, Lc, temp, angle, wick) {
-            // Leff_m 轉換為公尺，用於毛細極限反比計算
             let Leff_m = (L - 0.5 * (Le + Lc)) / 1000;
             if (Leff_m <= 0) Leff_m = 0.001; 
             
             let fluidFactor = getFluidMerit(fluid, temp);
-            
             let angleFactor = 1.0;
             let isDryout = false;
 
-            // 靜水壓與毛細極限判定
-            let H_max = wick === 'performance' ? 300 : 200; // 最大毛細揚程 (mm)
-            let H_g = L * Math.sin(angle * Math.PI / 180);  // 重力高度變化 (mm)
+            let H_max = wick === 'performance' ? 300 : 200; 
+            let H_g = L * Math.sin(angle * Math.PI / 180);  
 
             if (angle > 0) {
-                // 順重力 (Thermosyphon)，效能提升
                 angleFactor = 1 + 0.3 * Math.sin(angle * Math.PI / 180);
             } else if (angle < 0) {
-                // 逆重力，須克服靜水壓
                 if (Math.abs(H_g) > H_max) {
-                    angleFactor = 0.05; // 完全乾燒
+                    angleFactor = 0.05; 
                     isDryout = true;
                 } else {
                     angleFactor = 1 - (Math.abs(H_g) / H_max);
                 }
             }
 
-            // Qmax = (C_D / Leff) * Fluid_Merit * Gravity_Factor
             let baseC_D = getBaseCapillaryFactor(d);
             let qmax = (baseC_D / Leff_m) * fluidFactor * angleFactor;
             
-            // 高效能粉末能提升毛細力與滲透率平衡
             if (wick === 'performance') qmax *= 1.2;
 
             return { qmax: qmax, isDryout: isDryout };
@@ -367,7 +426,6 @@
 
         // --- 主計算與介面更新邏輯 ---
         function calculate() {
-            // 1. 長度驗證
             if (state.Le + state.Lc >= state.L) {
                 ui.lenWarning.classList.remove('hidden');
                 setOutputs('-', '-', '-', '-');
@@ -378,7 +436,6 @@
             
             let Leff = state.L - 0.5 * (state.Le + state.Lc); 
 
-            // 呼叫核心演算法取得 Qmax
             let perf = computePerformance(state.fluid, state.d, state.L, state.Le, state.Lc, state.temp, state.angle, state.wick);
             let qmax = perf.qmax;
             
@@ -388,22 +445,20 @@
                 ui.gravityWarning.classList.add('hidden');
             }
 
-            // 5. 計算等效熱阻 Rth (°C/W)
             let rth = (Leff / 100) * (8 / Math.pow(state.d, 2));
             if (rth < 0.02) rth = 0.02;
 
-            // 6. 計算預估最大溫差
             let dt = qmax * rth;
 
-            // 7. 計算等效熱傳導率 Keff (W/m·K)
-            // Keff = Leff_m / (Rth * Ac_m2)
             let Leff_m = Leff / 1000;
             let radius_m = (state.d / 2) / 1000;
             let Ac_m2 = Math.PI * Math.pow(radius_m, 2);
             let keff = Leff_m / (rth * Ac_m2);
 
-            // 更新 UI
             setOutputs(qmax.toFixed(1), rth.toFixed(3), dt.toFixed(1), Math.round(keff).toLocaleString());
+            
+            // 更新圖表
+            updateCharts(dt);
         }
 
         function setOutputs(q, r, dt, k) {
@@ -413,11 +468,139 @@
             ui.outKeff.innerText = k;
         }
 
+        // --- 視覺化圖表更新邏輯 ---
+        function updateCharts(current_dt) {
+            // 1. 更新 Power vs. Angle 圖表
+            const angles = [90, 45, 0, -45, -90];
+            const powerData = angles.map(a => {
+                let perf = computePerformance(state.fluid, state.d, state.L, state.Le, state.Lc, state.temp, a, state.wick);
+                return perf.qmax;
+            });
+
+            if (powerChartInstance) {
+                powerChartInstance.data.datasets[0].data = powerData;
+                powerChartInstance.data.datasets[0].label = `${state.d}mm 管徑`;
+                powerChartInstance.update();
+            } else {
+                const ctx1 = document.getElementById('chart-power').getContext('2d');
+                powerChartInstance = new Chart(ctx1, {
+                    type: 'line',
+                    data: {
+                        labels: ['90°', '45°', '0°', '-45°', '-90°'],
+                        datasets: [{
+                            label: `${state.d}mm 管徑`,
+                            data: powerData,
+                            borderColor: '#0d9488', // teal
+                            backgroundColor: 'rgba(13, 148, 136, 0.15)',
+                            borderWidth: 2,
+                            pointBackgroundColor: '#2dd4bf',
+                            fill: true,
+                            tension: 0.4 // 平滑曲線
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: {
+                            y: {
+                                beginAtZero: true,
+                                title: { display: true, text: 'Power (W)' },
+                                grid: { color: '#334155', drawBorder: false }
+                            },
+                            x: {
+                                title: { display: true, text: 'Angle (°)' },
+                                grid: { color: '#334155', drawBorder: false, borderDash: [5, 5] }
+                            }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.9)', titleColor: '#38bdf8' }
+                        }
+                    }
+                });
+            }
+
+            // 2. 更新 Axial Temperature Profile 圖表
+            // 設定溫度分佈比例：為了視覺上清楚看到沿軸向的熱阻壓降現象
+            // 假設總溫差分配：Evap 佔 10%, Axial(絕熱段) 佔 80%, Cond 佔 10% 
+            const t_op = state.temp;
+            const t0 = t_op + current_dt / 2;
+            const t1 = t0 - current_dt * 0.1;
+            const t2 = t1 - current_dt * 0.8;
+            const t3 = t_op - current_dt / 2;
+
+            const tempProfileData = [
+                { x: 0, y: t0 },
+                { x: state.Le, y: t1 },
+                { x: state.L - state.Lc, y: t2 },
+                { x: state.L, y: t3 }
+            ];
+
+            if (tempChartInstance) {
+                tempChartInstance.data.datasets[0].data = tempProfileData;
+                tempChartInstance.options.scales.x.max = state.L;
+                tempChartInstance.options.plugins.zonePlugin.Le = state.Le;
+                tempChartInstance.options.plugins.zonePlugin.Lc = state.Lc;
+                tempChartInstance.options.plugins.zonePlugin.L = state.L;
+                tempChartInstance.update();
+            } else {
+                const ctx2 = document.getElementById('chart-temp').getContext('2d');
+                tempChartInstance = new Chart(ctx2, {
+                    type: 'scatter', // 使用 scatter 並開啟 showLine 以便繪製自定義 x 軸距離
+                    data: {
+                        datasets: [{
+                            label: 'Temp (°C)',
+                            data: tempProfileData,
+                            borderColor: '#38bdf8', // light blue
+                            backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                            borderWidth: 2,
+                            pointRadius: 0, // 隱藏節點，使其看起來連續
+                            pointHoverRadius: 5,
+                            showLine: true,
+                            fill: true,
+                            tension: 0 // 直線段表示各區段熱阻
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: {
+                            x: {
+                                type: 'linear',
+                                position: 'bottom',
+                                min: 0,
+                                max: state.L,
+                                title: { display: true, text: 'x (mm)' },
+                                grid: { color: '#334155', borderDash: [5, 5] }
+                            },
+                            y: {
+                                title: { display: true, text: 'Temp (°C)' },
+                                grid: { color: '#334155' },
+                                // 讓 Y 軸的顯示範圍稍寬於最高與最低溫，避免線條貼齊邊界
+                                suggestedMax: t0 + 1,
+                                suggestedMin: t3 - 1
+                            }
+                        },
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: { backgroundColor: 'rgba(15, 23, 42, 0.9)' },
+                            zonePlugin: { 
+                                enabled: true,
+                                Le: state.Le,
+                                Lc: state.Lc,
+                                L: state.L
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
         // --- 匯出功能邏輯 ---
-        
-        // 匯出 CSV
         ui.btnExportCsv.addEventListener('click', () => {
-            let csvContent = "\uFEFF"; // 加入 BOM 讓 Excel 支援中文
+            let csvContent = "\uFEFF"; 
             csvContent += `設計參數,數值\n`;
             csvContent += `工作流體,${state.fluid}\n`;
             csvContent += `管徑 (mm),${state.d}\n`;
@@ -439,12 +622,10 @@
             link.click();
         });
 
-        // 匯出 PDF
         ui.btnExportPdf.addEventListener('click', () => {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF();
 
-            // 加上預設字體處理（避免中文亂碼，這邊先用英文顯示變數）
             doc.setFontSize(16);
             doc.text("Heat Pipe Performance Report: Power vs. Angle", 14, 20);
             
